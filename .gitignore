@@ -12,6 +12,14 @@ Session.vim
 .netrwhist
 *~
 
+# Model checkpoints 
+*.ckpt 
+
+# IO extentions 
+*.npz 
+*.csv 
+*.png
+
 ### IPythonNotebook template
 # Temporary data
 .ipynb_checkpoints/
