@@ -233,7 +233,7 @@ def find_first_last_slice(mask):
     nonzero_indices = np.where(slices)[0]
 
     first_slice = np.amin(nonzero_indices)
-    last_slice = np.amax(nonzero_indices) 
+    last_slice = np.amax(nonzero_indices)
 
     return first_slice, last_slice
 
@@ -293,6 +293,7 @@ def pos_neg_true_visual(image,
         axes[counter].imshow(image[i], cmap = 'gray') 
         axes[counter].imshow(comb_masks[i], cmap = cmap, norm = norm, interpolation = 'nearest', alpha = 0.6)
         axes[counter].axis("off")
+        axes[counter].text(0.5, -0.1, f"Slice {i}", size = 11, ha ="center", transform = axes[counter].transAxes)
         counter += 1
 
         plt.tight_layout()
