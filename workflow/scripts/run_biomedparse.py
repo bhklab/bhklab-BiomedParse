@@ -237,6 +237,13 @@ def find_first_last_slice(mask):
 
     return first_slice, last_slice
 
+def list_nonzero_seg_slices(seg): 
+    nonzero_slices = []
+    for slice_idx in range(seg.shape[0]): 
+        if np.count_nonzero(seg[slice_idx]) > 0: 
+            nonzero_slices.append(slice_idx)
+    return nonzero_slices
+
 def pos_neg_true_visual(image, 
                         mask_preds, 
                         gt_masks, 
@@ -337,6 +344,13 @@ def calc_metrics(pred_mask: np.ndarray,
     first_gts, last_gts = find_first_last_slice(gt_mask)
     first_pred, last_pred = find_first_last_slice(pred_mask) 
 
+    # Get the list of all slices that have segmentation in them for each mask 
+    mask_pred_list = list_nonzero_seg_slices(pred_mask)
+    gt_list = list_nonzero_seg_slices(gt_mask) 
+
+    metric_df['GTSliceList'] = [gt_list]
+    metric_df['PredSliceList'] = [mask_pred_list]
+
     gts_range = [first_gts, last_gts] 
     pred_range = [first_pred, last_pred] 
 
@@ -344,6 +358,11 @@ def calc_metrics(pred_mask: np.ndarray,
     metric_df['PredSliceRange'] = [pred_range]
     metric_df['filename'] = filename # To ensure we can map the results back to the segmentations 
 
+    # Get slice interval IoU 
+    metric_df['SliceIoU'] = len(list(set.intersection(set(gt_list), set(mask_pred_list)))) / len(list(set.union(set(gt_list), set(mask_pred_list))))
+    metric_df['MaskUniqueSlice'] = [list(set(mask_pred_list) - set(gt_list))] # Only slices that are in predicted mask and are not in ground truth mask
+    metric_df['GTUniqueSlice'] = [list(set(gt_list) - set(mask_pred_list))] # Opposite of the line above
+    
     return metric_df
 
 def create_from_prev_and_predict(npz_file: Path, 
