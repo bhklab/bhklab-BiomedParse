@@ -1,0 +1,121 @@
+### Prompt Skeleton List for BiomedParse Prompt Testing ### 
+
+# These skeletons are meant to be generalizable to various coordinate points or spatial information collected during image/mask 
+# loading and preprocessing.
+
+## Types of prompt forms to replace the constant definitions in skeletons ## 
+# Each of these are full strings where the <> are replaced with the coordinates found during image/mask loading or 
+# control coordinates
+
+# COORD_POINT # 
+# "x = <X>, y = <Y>, z = <Z>"
+# E.g. "x = 282, y = 350, z = 44"
+
+# LINE1_COORDS # 
+# "x1 = <X1>, y1 = <Y1>, z1 = <Z1>, x2 = <X2>, y2 = <Y2>, z2 = <Z2>"
+# E.g. "x1 = 241, y1 = 363, z1 = 44, x2 = 323, y2 = 338, z2 = 44"
+
+# LINE2_COORDS # 
+# "(<Z1>, <X1>, <Y1>), (<Z2>, <X2>, <Y2>)"
+# E.g. "(44, 241, 363), (44, 323, 338)"
+
+TEXT_PROMPTS: 
+    ### Spatial Into Prompts ###
+    MIDPOINT:
+        "1": COORD_POINT
+        "instance_label": 0
+    LINE1: 
+        "1": LINE1_COORDS
+        "instance_label": 0
+    LINE2: 
+        "1": LINE2_COORDS
+        "instance_label": 0
+
+    ### Midpoint & Text Prompts ###
+    MIDPOINT_TEXT_TUM: 
+        "1": "segment tumour located at the coordinates COORD_POINT"
+        "instance_label": 0
+    MIDPOINT_TEXT_TUM_EX1:
+        "1": "segment tumour located at the coordinates COORD_POINT and ignore all other structures"
+        "instance_label": 0
+    MIDPOINT_TEXT_TUM_EX2: 
+        "1": "segment tumour located at the coordinates COORD_POINT only"
+        "instance_label": 0
+    MIDPOINT_TEXT_MAL: 
+        "1": "segment malignancy located at the coordinates COORD_POINT"
+        "instance_label": 0
+    MIDPOINT_TEXT_MAL_EX1: 
+        "1": "segment malignancy located at the coordinates COORD_POINT and ignore all other structures"
+        "instance_label": 0
+    MIDPOINT_TEXT_MAL_EX2: 
+        "1": "segment malignancy located at the coordinates COORD_POINT only"
+        "instance_label": 0
+
+    ### Line (Form 1) & Text Prompts ###
+    LINE1_TEXT_TUM: 
+        "1": "segment tumour defined by the line LINE1_COORDS"
+        "instance_label": 0
+    LINE1_TEXT_TUM_EX1: 
+        "1": "segment tumour defined by the line LINE1_COORDS and ignore all other structures"
+        "instance_label": 0
+    LINE1_TEXT_TUM_EX2: 
+        "1": "segment tumour defined by the line LINE1_COORDS only"
+        "instance_label": 0
+    LINE1_TEXT_MAL: 
+        "1": "segment malignancy defined by the line LINE1_COORDS"
+        "instance_label": 0
+    LINE1_TEXT_MAL_EX1:
+        "1": "segment malignancy defined by the line LINE1_COORDS and ignore all other structures"
+        "instance_label": 0
+    LINE1_TEXT_MAL_EX2:
+        "1": "segment malignancy defined by the line LINE1_COORDS only"
+        "instance_label": 0
+    
+    ### Line (Form 2) & Text Prompts 
+    LINE2_TEXT_TUM: 
+        "1": "segment tumour defined by the line at points LINE2_COORDS"
+        "instance_label": 0
+    LINE2_TEXT_TUM_EX1:
+        "1": "segment tumour defined by the line at points LINE2_COORDS and ignore all other structures"
+        "instance_label": 0
+    LINE2_TEXT_TUM_EX2: 
+        "1": "segment tumour defined by the line at points LINE2_COORDS only"
+        "instance_label": 0
+    LINE2_TEXT_MAL:
+        "1": "segment malignancy defined by the line at points LINE2_COORDS"
+        "instance_label": 0
+    LINE2_TEXT_MAL_EX1: 
+        "1": "segment malignancy defined by the line at points LINE2_COORDS and ignore all other structures"
+        "instance_label": 0
+    LINE2_TEXT_MAL_EX2: 
+        "1": "segment malignancy defined by the line at points LINE2_COORDS only"
+        "instance_label": 0
+    
+    ### Simple Prompts ###
+    SIMPLE_TUM: 
+        "1": "tumour"
+        "instance_label": 0
+    SIMPLE_TUM_USA:
+        "1": "tumor"
+        "instance_label": 0
+    SIMPLE_MAL: 
+        "1": "malignancy"
+        "instance_label": 0 
+    ACTION_TUM: 
+        "1": "segment tumour"
+        "instance_label": 0 
+    ACTION_TUM_EX1: 
+        "1": "segment tumour and ignore all other structures"
+        "instance_label": 0 
+    ACTION_TUM_EX2: 
+        "1": "segment tumour only"
+        "instance_label": 0
+    ACTION_MAL: 
+        "1": "segment malignancy"
+        "instance_label": 0 
+    ACTION_MAL_EX1: 
+        "1": "segment malignancy and ignore all other structures"
+        "instance_label": 0
+    ACTION_MAL_EX2:
+        "1": "segment malignancy only"
+        "instance_label": 0
