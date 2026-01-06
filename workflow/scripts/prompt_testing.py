@@ -693,6 +693,7 @@ def run_infer_result_plot(img: np.ndarray,
                         seg: np.ndarray, 
                         spacing: np.ndarray,
                         text_prompt: dict, 
+                        prompt_name: str,
                         model, 
                         device: torch.device,
                         pred_savepath: Path): 
@@ -711,6 +712,8 @@ def run_infer_result_plot(img: np.ndarray,
         The spacing associated with the ground truth mask.
     text_prompt: dict 
         The text prompt used for inference. Assumes in a BiomedParse-compatible form. 
+    prompt_name: str
+        The name of the prompt used (for save name purposes).
     model: 
         The BiomedParse model created after initialization with the checkpoint
     device: torch.device
@@ -746,9 +749,9 @@ def run_infer_result_plot(img: np.ndarray,
     
     # Create predicted mask save name and save prediction 
     full_savepath = str(pred_savepath).removesuffix('.nii.gz')
-    pred_mask_savepath = full_savepath + '_pred.nii.gz'
+    pred_mask_savepath = full_savepath + '_' + prompt_name + '_pred.nii.gz'
 
-    sitk.WriteImage(image = pred_mask, 
+    sitk.WriteImage(image = sitk.GetImageFromArray(pred_mask), 
                     fileName = pred_mask_savepath)
 
     # Calculate metrics for this run 
@@ -817,7 +820,7 @@ def choose_windowing(dataset: str):
         case 'TCIA_CPTAC-CCRCC': 
             window_level = 50
             window_width = 400
-        case 'TCIA_CPATC-PDA':
+        case 'TCIA_CPTAC-PDA':
             window_level = 50
             window_width = 400
         case 'TCIA_HEAD-NECK-RADIOMICS-HN1': 
@@ -829,6 +832,8 @@ def choose_windowing(dataset: str):
         case 'TCIA_NSCLC-Radiomics': 
             window_level = -600
             window_width = 1500
+        case _: 
+            raise ValueError(f"Invalid dataset name: {dataset}. Please check spelling or add to this function with the correct window and level")
 
     return window_level, window_width
 
@@ -905,9 +910,9 @@ def run_one_prompt_test(img_path: Path,
 
     # Make save path 
     seg_filename = "/".join(str(seg_path).split("/")[-3:]) #Gets the patient ID, RTSTRUCT/SEG name, and mask file name
-    dataset = str(seg_path).split("/")[-4]
-    disease_site = str(seg_path).split("/")[-5]
-    savepath = Path("data/results") / dataset / disease_site / 'prompt_testing' / Path(seg_filename)
+    dataset = str(seg_path).split("/")[-6]
+    disease_site = str(seg_path).split("/")[-7]
+    savepath = Path("data/results") / 'prompt_testing' / disease_site / dataset / Path(seg_filename)
 
     # Run prompt testing in parallel 
     samp_test_results = Parallel(n_jobs = n_jobs)(
@@ -915,11 +920,12 @@ def run_one_prompt_test(img_path: Path,
                         seg = gt_seg_arr, 
                         spacing = gt_seg.GetSpacing(),
                         text_prompt = curr_prompt, 
+                        prompt_name = prompt_name,
                         model =  model, 
                         device = device,
                         pred_savepath = savepath)
-                        for _, curr_prompt in tqdm(
-                            prompt_dict["TEXT_PROMPTS"],
+                        for prompt_name, curr_prompt in tqdm(
+                            prompt_dict["TEXT_PROMPTS"].items(),
                             desc = "Running prompt testing using BiomedParse.",
                             total = len(prompt_dict["TEXT_PROMPTS"])
                         )
