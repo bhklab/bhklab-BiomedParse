@@ -342,7 +342,12 @@ def calc_metrics(pred_mask: np.ndarray,
 
     #Add columns for the range of segmentation values (both ground truth and predicted)
     first_gts, last_gts = find_first_last_slice(gt_mask)
-    first_pred, last_pred = find_first_last_slice(pred_mask) 
+    try: #If no mask was predicted, this will throw an error
+        first_pred, last_pred = find_first_last_slice(pred_mask) 
+    except ValueError: 
+        print(f"Empty predicted segmentation for file: {filename}.")
+        first_pred = 0
+        last_pred = 0
 
     # Get the list of all slices that have segmentation in them for each mask 
     mask_pred_list = list_nonzero_seg_slices(pred_mask)
