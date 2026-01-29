@@ -20,6 +20,9 @@ Session.vim
 *.csv 
 *.png
 
+# Specific files 
+*patient_subset.yaml
+
 ### IPythonNotebook template
 # Temporary data
 .ipynb_checkpoints/
