@@ -8,6 +8,7 @@ import seaborn as sns
 import yaml
 import SimpleITK as sitk
 import click
+import copy
 
 from skimage.measure import regionprops 
 from skimage.draw import line
@@ -88,7 +89,7 @@ def load_prompt_skeletons(prompt_config_path: Path):
 def apply_windowing(img_array: np.ndarray,
                     window_level: int, 
                     window_width: int
-                    ) -> np.ndarray:
+                    ) -> np.ndarray: 
     '''
     Window an image based on a window width (width of range of values to use) and a window level (where to center a window level). Otherwise known as clipping or clamping in image processing.
     
@@ -418,7 +419,7 @@ def create_coord_prompts(prompt_skel_dict: dict,
         A dictionary with the same structure as prompt_skel_dict, but the dummy variables
         are replaced with the appropriate coordinate strings        
     '''
-    prompts = prompt_skel_dict["TEXT_PROMPTS"]
+    prompts = copy.deepcopy(prompt_skel_dict["TEXT_PROMPTS"])
     for key, _ in prompts.items(): 
         skel_prompt = prompts[key]['1']
         if 'COORD_POINT' in skel_prompt: 
@@ -427,7 +428,10 @@ def create_coord_prompts(prompt_skel_dict: dict,
             coord_prompt = skel_prompt.replace('LINE1_COORDS', line1_coords)
         elif 'LINE2_COORDS' in skel_prompt: 
             coord_prompt = skel_prompt.replace('LINE2_COORDS', line2_coords) 
-        
+        else: 
+            #This should be entered for the simple prompts that don't have placeholder variables in them. Therefore nothing changes. 
+            coord_prompt = skel_prompt
+
         prompts[key]['1'] = coord_prompt
 
     coord_prompt_dict = {"TEXT_PROMPTS": prompts}
@@ -583,21 +587,29 @@ def plot_density(gt_mask: np.ndarray,
 
     # Combine dataframes into one for plotting
     all_data = pd.concat([gt_data, pred_data], axis = 0).reset_index(drop = True)
+    # Check if the data has NaNs and if so, return and don't make the graph (it'll return an error otherwise)
+    if all_data.isnull().values.any(): 
+        print(f"NaNs present in the histogram data dataframe for: {full_savepath}. Cannot create density plot.")
+        return 0
 
     # Create figure 
-    plot = sns.displot(data = all_data, 
+    try:
+        plot = sns.displot(data = all_data, 
                 x = "slice_num", 
                 weights = "pix_count", 
                 hue = "Mask Type",
                 kind = "kde", 
                 fill = True
                 )
-    plot.set(xlim=(0, gt_mask.shape[0]), xlabel = "Slice Number")
+        plot.set(xlim=(0, gt_mask.shape[0]), xlabel = "Slice Number")
 
-    plt.figtext(0.5, -0.05, "Prompt: " + text_prompt, ha='center', va='top')
+        plt.figtext(0.5, -0.05, "Prompt: " + text_prompt, ha='center', va='top')
 
-    # Save figure
-    plt.savefig(full_savepath, bbox_inches = 'tight')
+        # Save figure
+        plt.savefig(full_savepath, bbox_inches = 'tight')
+    except ValueError:
+        print(f"NaNs present during the calculation of density for: {full_savepath}. Cannot create density plot.")
+        return 0
 
 ## Functions for Run ## 
 def biomedparse_preproc(image: np.ndarray, 
@@ -692,6 +704,8 @@ def do_inference(in_tensor: dict,
 def run_infer_result_plot(img: np.ndarray, 
                         seg: np.ndarray, 
                         spacing: np.ndarray,
+                        origin: np.ndarray,
+                        direction: np.ndarray,
                         text_prompt: dict, 
                         prompt_name: str,
                         model, 
@@ -710,10 +724,14 @@ def run_infer_result_plot(img: np.ndarray,
         The ground truth segmentation that pairs with a given image. 
     spacing: np.ndarray
         The spacing associated with the ground truth mask.
+    origin: np.ndarray
+        The origin associated with the ground truth mask. 
+    direction: np.ndarray
+	The direction associated with the ground truth mask.
     text_prompt: dict 
         The text prompt used for inference. Assumes in a BiomedParse-compatible form. 
     prompt_name: str
-        The name of the prompt used (for save name purposes).
+	The name of the text prompt used for inference. Stored in the key of the skeleton prompt dictionary 
     model: 
         The BiomedParse model created after initialization with the checkpoint
     device: torch.device
@@ -734,7 +752,6 @@ def run_infer_result_plot(img: np.ndarray,
     input_tensor, pad_width, padded_size, valid_axis, ids = biomedparse_preproc(image = img, 
                                                                                 text_prompt = text_prompt, 
                                                                                 device = device)
-    
     # Perform inference 
     pred_mask = do_inference(in_tensor = input_tensor, 
                              pad_width = pad_width, 
@@ -744,55 +761,65 @@ def run_infer_result_plot(img: np.ndarray,
                              model = model)
     
     # Check if save path exists and if not, create it
-    if not pred_savepath.exists(): 
-        pred_savepath.mkdir(parents = True, exist_ok = True) 
+    inter_savepath = "/".join(str(pred_savepath).split("/")[:-1]) #Should get everything but the ground truth segmenation file name 
+    if not Path(inter_savepath).exists(): 
+        Path(inter_savepath).mkdir(parents = True, exist_ok = True) 
     
     # Create predicted mask save name and save prediction 
-    full_savepath = str(pred_savepath).removesuffix('.nii.gz')
-    pred_mask_savepath = full_savepath + '_' + prompt_name + '_pred.nii.gz'
+    full_savepath = str(pred_savepath).removesuffix('.nii.gz') + "_" + prompt_name
+    pred_mask_savepath = full_savepath + '_pred.nii.gz'
 
-    sitk.WriteImage(image = sitk.GetImageFromArray(pred_mask), 
+    # Get the predicted mask into an image and ensure same spacing, orientation and direction 
+    pred_mask_img = sitk.GetImageFromArray(pred_mask)
+
+    pred_mask_img.SetSpacing(spacing)
+    pred_mask_img.SetOrigin(origin)
+    pred_mask_img.SetDirection(direction)
+
+    # Save predicted mask
+    sitk.WriteImage(image = pred_mask_img, 
                     fileName = pred_mask_savepath)
 
     # Calculate metrics for this run 
     results_df = calc_metrics(pred_mask = pred_mask, 
                               gt_mask = seg,
                               spacing = spacing, 
-                              filename = pred_mask_savepath)
+                              filename = pred_mask_savepath, 
+                              text_prompt = prompt_name)
     
-    # Get plots and save to same folder 
+    # Get plots and save to same folder if the predicted mask is non-empty
+    if np.count_nonzero(pred_mask) > 0:
+        # Midslice plot #
+        mid_slice = locate_centre_slice(mask_3d = seg) # Get center slice of ground truth
+        mid_slice_savepath = Path(full_savepath + "_midslice.png") 
     
-    # Midslice plot #
-    mid_slice = locate_centre_slice(mask_3d = seg) # Get center slice of ground truth
-    mid_slice_savepath = Path(full_savepath + "_midslice.png") 
-    
-    mid_slice_visual(image = img, 
+        mid_slice_visual(image = img, 
                      mask_preds = pred_mask, 
                      gt_masks = seg, 
                      text_prompts = text_prompt, 
                      mid_slice = mid_slice, 
                      full_savepath = mid_slice_savepath)
 
-    # True Positive, False Positive, False Negative plot # 
-    pos_neg_savepath = Path(full_savepath + "_posneg.png")
+    	# True Positive, False Positive, False Negative plot # 
+        pos_neg_savepath = Path(full_savepath + "_posneg.png")
 
-    pos_neg_true_visual(image = img, 
+        pos_neg_true_visual(image = img, 
                         mask_preds = pred_mask, 
                         gt_masks = seg, 
                         full_savepath = pos_neg_savepath)
     
-    # Pixel count histogram #
-    pix_hist_savepath = Path(full_savepath + "_pixhist.png")
+        # Pixel count histogram #
+        pix_hist_savepath = Path(full_savepath + "_pixhist.png")
     
-    plot_hist(gt_mask = seg, 
+        plot_hist(gt_mask = seg, 
               pred_mask = pred_mask, 
               text_prompt = text_prompt['1'], 
               full_savepath = pix_hist_savepath)
     
-    # Pixel-slice density plot #
-    pix_dens_savepath = Path(full_savepath + "_pixdens.png")
+        # Pixel-slice density plot #
+        pix_dens_savepath = Path(full_savepath + "_pixdens.png")
 
-    plot_density(gt_mask = seg, 
+        plot_density(gt_mask = seg, 
                  pred_mask = pred_mask, 
                  text_prompt = text_prompt['1'], 
                  full_savepath = pix_dens_savepath)
@@ -919,12 +946,14 @@ def run_one_prompt_test(img_path: Path,
         delayed(run_infer_result_plot)(img = ct_img_arr, 
                         seg = gt_seg_arr, 
                         spacing = gt_seg.GetSpacing(),
-                        text_prompt = curr_prompt, 
-                        prompt_name = prompt_name,
+                        origin = gt_seg.GetOrigin(), 
+                        direction = gt_seg.GetDirection(),
+                        text_prompt = curr_prompt,
+                        prompt_name = curr_key, 
                         model =  model, 
                         device = device,
                         pred_savepath = savepath)
-                        for prompt_name, curr_prompt in tqdm(
+                        for curr_key, curr_prompt in tqdm(
                             prompt_dict["TEXT_PROMPTS"].items(),
                             desc = "Running prompt testing using BiomedParse.",
                             total = len(prompt_dict["TEXT_PROMPTS"])
@@ -980,12 +1009,14 @@ def run_prompt_test(dataset: str,
 
     for patient in curr_path.iterdir(): 
         for folder in patient.iterdir(): 
-            if str(folder).str.contains('CT'): 
+            if 'CT' in str(folder): 
                 for file in folder.iterdir(): # Assumes one file per folder, otherwise may not have matching image/segmentations
-                    imaging_path = curr_path / patient / folder / file
-            elif str(folder).str.contains('RTSTRUCT') or str(folder).str.contains('SEG'): 
+                    print(file)
+                    imaging_path = file
+            elif 'RTSTRUCT' in str(folder) or 'SEG' in str(folder): 
                 for file in folder.iterdir():
-                    gt_seg_path = curr_path / patient / folder / file
+                    print(file)
+                    gt_seg_path = file
             
             # Run the prompt test on current sample 
             result_df = run_one_prompt_test(img_path = imaging_path, 
@@ -1026,7 +1057,10 @@ def test_subset(subset_yaml: Path,
     n_jobs: int
         How many jobs to use for parallelization. 
     '''   
-    out_path = Path('data/results') / 'biomedparse_prompt_testing'
+    out_path = Path('data/results') / Path('prompt_testing')
+
+    if not out_path.exists(): 
+        out_path.mkdir(parents = True, exist_ok = True)
 
     # Initialize model and load prompt skeletons
     model, device = initialize_model(ckpt_path = checkpoint_path)
@@ -1037,23 +1071,26 @@ def test_subset(subset_yaml: Path,
         patient_subset = yaml.load(file, Loader=yaml.SafeLoader)
 
     for key, value in patient_subset["REL_PATHS"].items():
+        print(f"Current Dataset: {key}")
         window_level, window_width = choose_windowing(dataset = str(key)) 
         for path in value:
             # Iterate over files in current relative path and use key (dataset name) for windowing
             full_path = Path("data/procdata") / path
+            print(f"Full Path: {full_path}")
             for folder in full_path.iterdir(): 
-                if str(folder).str.contains('CT'): 
+                if 'CT' in str(folder) and 'RTSTRUCT' not in str(folder): 
                     # Assumes one file per folder and only one CT scan in the patient folder. 
                     for file in folder.iterdir():
-                        imaging_path = full_path / folder / file 
+                        imaging_path = file 
+                        print(f"Imaging path found: {imaging_path}")
                         break
             for folder in full_path.iterdir():
-                if str(folder).str.contains('CT'): 
-                    continue
-                elif str(folder).str.contains('RTSTRUCT') or str(folder).str.contains('SEG'): 
+                if 'RTSTRUCT' in str(folder) or 'SEG' in str(folder): 
                     for file in folder.iterdir(): # Assumes one file per folder 
-                        gt_seg_path = full_path / folder / file
-                
+                        gt_seg_path = file
+                        print(f"Segmentation path found: {gt_seg_path}")
+                else: 
+                    continue
                 # Run the prompt test on current sample 
                 result_df = run_one_prompt_test(img_path = imaging_path, 
                                                 seg_path = gt_seg_path, 
