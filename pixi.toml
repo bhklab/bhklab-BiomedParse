@@ -35,7 +35,7 @@ extra-index-urls = ["https://download.pytorch.org/whl/cu124"]
 no-build-isolation = ["detectron2"]
 
 [pypi-dependencies]
-detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", rev = "5b72c27ae39f99db75d43f18fd1312e1ea934e60"}
+detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", rev = "main"}
 torch = "==2.6.0+cu124"
 torchvision = "==0.21.0+cu124"
 torchaudio = "==2.6.0+cu124"
