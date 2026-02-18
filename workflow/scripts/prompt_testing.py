@@ -89,7 +89,7 @@ def load_prompt_skeletons(prompt_config_path: Path):
 def apply_windowing(img_array: np.ndarray,
                     window_level: int, 
                     window_width: int
-                    ) -> np.ndarray: 
+                    ) -> np.ndarray:
     '''
     Window an image based on a window width (width of range of values to use) and a window level (where to center a window level). Otherwise known as clipping or clamping in image processing.
     
@@ -939,7 +939,7 @@ def run_one_prompt_test(img_path: Path,
     seg_filename = "/".join(str(seg_path).split("/")[-3:]) #Gets the patient ID, RTSTRUCT/SEG name, and mask file name
     dataset = str(seg_path).split("/")[-6]
     disease_site = str(seg_path).split("/")[-7]
-    savepath = Path("data/results") / 'prompt_testing' / disease_site / dataset / Path(seg_filename)
+    savepath = Path("data/results") / 'prompt_testing' / 'test_conda' / disease_site / dataset / Path(seg_filename)
 
     # Run prompt testing in parallel 
     samp_test_results = Parallel(n_jobs = n_jobs)(
@@ -998,7 +998,7 @@ def run_prompt_test(dataset: str,
     dataset_short = dataset.split("_")[-1]
     curr_path = Path("data/procdata") / disease_site / dataset / 'images' / Path('mit_' + dataset_short)
 
-    out_path = Path("data/results") / disease_site / dataset / 'prompt_testing'
+    out_path = Path("data/results") / disease_site / dataset / 'prompt_testing' / 'test_conda'
 
     # Initialize model and load prompt skeletons
     model, device = initialize_model(ckpt_path = checkpoint_path)
@@ -1057,7 +1057,7 @@ def test_subset(subset_yaml: Path,
     n_jobs: int
         How many jobs to use for parallelization. 
     '''   
-    out_path = Path('data/results') / Path('prompt_testing')
+    out_path = Path('data/results') / Path('prompt_testing') / Path('test_conda')
 
     if not out_path.exists(): 
         out_path.mkdir(parents = True, exist_ok = True)
