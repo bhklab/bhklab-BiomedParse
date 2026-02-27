@@ -116,6 +116,33 @@ def apply_windowing(img_array: np.ndarray,
 
     return windowed_img 
 
+def rescale_imgs_255(img_array: np.ndarray): 
+    '''  
+    Rescale images to the intensity range [0, 255]. Uses min-max scaling.
+
+    Parameters
+    ----------
+    img_array: np.ndarray
+        Image data to be rescaled 
+    
+    Returns
+    ----------
+    img_scaled: np.ndarray
+        The image data rescaled to the specified intensity range.
+    '''
+    img_min = img_array.min()
+    img_max = img_array.max()
+
+    if img_max - img_min == 0: 
+        # This should only happen if the image only has one value in it (should never happen unless the image is completely empty)
+        raise ValueError("Minimum and maximum values are the same, no variance in information in image")
+
+    img_scaled = (img_array - img_min) / (img_max - img_min) * 255
+
+    # Sanity check for first time run
+    print(f'Rescaled Image Min: {img_scaled.min()} and Max: {img_scaled.max()}')
+    return img_scaled
+
 ## Generating Coordinates ## 
 def pad_bbox(box:np.array,
              mask:np.array, 
@@ -323,10 +350,6 @@ def get_recist_line_coords(recist_arr: np.ndarray):
     else:
         first_coord = np.array(non_zero_idxs[0])
         last_coord = np.array(non_zero_idxs[-1])
-
-        print(f"First Point: {first_coord}")
-        print(f"Last Point: {last_coord}")
-        print(f"Slice Number: {slice_num}")
 
         return first_coord, last_coord, slice_num
 
@@ -727,11 +750,11 @@ def run_infer_result_plot(img: np.ndarray,
     origin: np.ndarray
         The origin associated with the ground truth mask. 
     direction: np.ndarray
-	The direction associated with the ground truth mask.
+	    The direction associated with the ground truth mask.
     text_prompt: dict 
         The text prompt used for inference. Assumes in a BiomedParse-compatible form. 
     prompt_name: str
-	The name of the text prompt used for inference. Stored in the key of the skeleton prompt dictionary 
+	    The name of the text prompt used for inference. Stored in the key of the skeleton prompt dictionary 
     model: 
         The BiomedParse model created after initialization with the checkpoint
     device: torch.device
@@ -845,19 +868,19 @@ def choose_windowing(dataset: str):
     '''
     match dataset: 
         case 'TCIA_CPTAC-CCRCC': 
-            window_level = 50
+            window_level = 40
             window_width = 400
         case 'TCIA_CPTAC-PDA':
-            window_level = 50
+            window_level = 40
             window_width = 400
         case 'TCIA_HEAD-NECK-RADIOMICS-HN1': 
-            window_level = 50
+            window_level = 40
             window_width = 400
         case 'TCIA_NSCLC-Radiogenomics': 
-            window_level = -600
+            window_level = -160
             window_width = 1500
         case 'TCIA_NSCLC-Radiomics': 
-            window_level = -600
+            window_level = -160
             window_width = 1500
         case _: 
             raise ValueError(f"Invalid dataset name: {dataset}. Please check spelling or add to this function with the correct window and level")
@@ -915,6 +938,9 @@ def run_one_prompt_test(img_path: Path,
                                  window_level = win_lvl, 
                                  window_width = win_width)
     
+    # Rescale image to [0, 255]
+    ct_img_arr_rescaled = rescale_imgs_255(img_array = ct_img_arr)
+    
     # Prepare prompts 
     x_min, y_min, z_min, x_max, y_max, z_max = mask3D_to_bbox(gt3D = gt_seg_arr,
                                                               mask_path = seg_path)
@@ -923,7 +949,7 @@ def run_one_prompt_test(img_path: Path,
     coords = np.array([x_min, y_min, x_max, y_max])
     rerecist_arr = get_line_from_recist(recist_coords = coords, 
                                         slice_number = z_mid, 
-                                        img_size = ct_img_arr.shape)
+                                        img_size = ct_img_arr_rescaled.shape)
 
     coord1, coord2, mid_slice = get_recist_line_coords(recist_arr = rerecist_arr)
 
@@ -943,7 +969,7 @@ def run_one_prompt_test(img_path: Path,
 
     # Run prompt testing in parallel 
     samp_test_results = Parallel(n_jobs = n_jobs)(
-        delayed(run_infer_result_plot)(img = ct_img_arr, 
+        delayed(run_infer_result_plot)(img = ct_img_arr_rescaled, 
                         seg = gt_seg_arr, 
                         spacing = gt_seg.GetSpacing(),
                         origin = gt_seg.GetOrigin(), 
@@ -1011,11 +1037,9 @@ def run_prompt_test(dataset: str,
         for folder in patient.iterdir(): 
             if 'CT' in str(folder): 
                 for file in folder.iterdir(): # Assumes one file per folder, otherwise may not have matching image/segmentations
-                    print(file)
                     imaging_path = file
             elif 'RTSTRUCT' in str(folder) or 'SEG' in str(folder): 
                 for file in folder.iterdir():
-                    print(file)
                     gt_seg_path = file
             
             # Run the prompt test on current sample 
@@ -1057,7 +1081,7 @@ def test_subset(subset_yaml: Path,
     n_jobs: int
         How many jobs to use for parallelization. 
     '''   
-    out_path = Path('data/results') / Path('prompt_testing') / Path('test_conda')
+    out_path = Path('data/results') / Path('prompt_testing') / Path('test_preproc')
 
     if not out_path.exists(): 
         out_path.mkdir(parents = True, exist_ok = True)
@@ -1076,7 +1100,6 @@ def test_subset(subset_yaml: Path,
         for path in value:
             # Iterate over files in current relative path and use key (dataset name) for windowing
             full_path = Path("data/procdata") / path
-            print(f"Full Path: {full_path}")
             for folder in full_path.iterdir(): 
                 if 'CT' in str(folder) and 'RTSTRUCT' not in str(folder): 
                     # Assumes one file per folder and only one CT scan in the patient folder. 
