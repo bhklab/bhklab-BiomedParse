@@ -7,6 +7,8 @@ import numpy as np
 import gc
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import click
+import copy
 
 from joblib import Parallel, delayed
 from tqdm import tqdm
@@ -74,8 +76,18 @@ def run_one_inference(img_path: Path,
     save_folder: str
         Where to save the predicted images. Replaces the "images" part of the original imaging path.
     '''
+    # Get dataset 
+    dataset = str(img_path).split("/")[3] # Assumes data structure of "data/procdata/<disease_site>/<dataset>/..."
+    
+    if dataset == 'CVPR_LesionLocator': # Do check for most appropriate file saving structure.
+        disease_site = 'MultiSite'
+    elif dataset == 'OCSCC_RADCURE':
+        disease_site == 'HeadNeck'
+    else:
+        disease_site = tumour_site.capitalize()
+
     # Load in image 
-    ct_img_raw = sitk.ReadImage(img_path) 
+    ct_img_raw = sitk.ReadImage(Path("data/procdata") / disease_site / img_path) 
     ct_img_arr_raw = sitk.GetArrayFromImage(ct_img_raw)
 
     # Choose windowing to use based on disease site 
@@ -90,16 +102,8 @@ def run_one_inference(img_path: Path,
     ct_img_arr_rescaled = rescale_imgs_255(img_array = ct_img_arr)
 
     # Prepare save paths 
-    dataset = str(img_path).split("/")[3] # Assumes data structure of "data/procdata/<disease_site>/<dataset>/..."
-    
-    if dataset == 'CVPR_LesionLocator': # Do check for most appropriate file saving structure.
-        disease_site = 'MultiSite'
-    elif dataset == 'OCSCC_RADCURE':
-        disease_site == 'HeadNeck'
-    else:
-        disease_site = tumour_site.capitalize()
 
-    base_savepath = Path("data/results") / disease_site / "/".join(str(img_path).split("/")[-1:]).replace("images", save_folder)
+    base_savepath = Path("data/results") / disease_site / "/".join(str(img_path).split("/")[:-1]).replace("images", save_folder)
     if not base_savepath.exists(): 
         base_savepath.mkdir(parents = True, exist_ok = True)
     
@@ -123,14 +127,14 @@ def run_one_inference(img_path: Path,
 
     pred_mask_img.SetSpacing(ct_img_raw.GetSpacing())
     pred_mask_img.SetOrigin(ct_img_raw.GetOrigin())
-    pred_mask_img.SetDirection(ct_img_raw.GetOrigin())
+    pred_mask_img.SetDirection(ct_img_raw.GetDirection())
 
     sitk.WriteImage(pred_mask_img, img_savepath)
 
     # Clean to save memory
     gc.collect() 
     del ct_img_raw, ct_img_arr, ct_img_arr_raw, ct_img_arr_rescaled, input_tensor, pred_mask_img, pred_mask
-    torch.cudda.empty_cache()
+    torch.cuda.empty_cache()
 
 def metrics_visuals_whole(index_df: pd.DataFrame, 
                           img_path: Path, 
@@ -183,8 +187,8 @@ def metrics_visuals_whole(index_df: pd.DataFrame,
         for idx in range(img_idx_subset.shape[0]-1): # Only need range up to second last index b/c addition below
             if idx == 0: 
                 # Load in both the first and second masks and combine them 
-                mask_path_1 = Path('data/procdata' / disease_site / img_idx_subset['mask_path'].iloc[idx])
-                mask_path_2 = Path('data/procdata' / disease_site / img_idx_subset['mask_path'].iloc[idx+1])
+                mask_path_1 = Path('data/procdata') / disease_site / img_idx_subset['mask_path'].iloc[idx]
+                mask_path_2 = Path('data/procdata') / disease_site / img_idx_subset['mask_path'].iloc[idx+1]
 
                 mask_img_1 = sitk.ReadImage(mask_path_1) 
                 mask_img_2 = sitk.ReadImage(mask_path_2)
@@ -195,12 +199,15 @@ def metrics_visuals_whole(index_df: pd.DataFrame,
                 comb_mask = mask_arr_1 | mask_arr_2
 
                 # Get largest slice of all tumours
-                slice1 = mask_arr_1[img_idx_subset['largest_slice_index'].iloc[idx]]
-                slice2 = mask_arr_2[img_idx_subset['largest_slice_index'].iloc[idx+1]]
+                slice1 = img_idx_subset['largest_slice_index'].iloc[idx]
+                slice2 = img_idx_subset['largest_slice_index'].iloc[idx+1]
+
+                mask_slice1 = mask_arr_1[img_idx_subset['largest_slice_index'].iloc[idx]]
+                mask_slice2 = mask_arr_2[img_idx_subset['largest_slice_index'].iloc[idx+1]]
 
                 # Get major axis lengths for both slices                 
-                props1 = regionprops(slice1)[0]
-                props2 = regionprops(slice2)[0]
+                props1 = regionprops(mask_slice1)[0]
+                props2 = regionprops(mask_slice2)[0]
 
                 diam1 = props1.major_axis_length
                 diam2 = props2.major_axis_length
@@ -216,16 +223,17 @@ def metrics_visuals_whole(index_df: pd.DataFrame,
                     largest_diam = diam1
             else: 
                 # Only need to load in the subsequent index and combine it with the previously combined masks 
-                mask_path = Path('data/procdata' / disease_site / img_idx_subset['mask_path'].iloc[idx+1])
+                mask_path = Path('data/procdata') / disease_site / img_idx_subset['mask_path'].iloc[idx+1]
                 mask_img = sitk.ReadImage(mask_path) 
                 mask_arr = sitk.GetArrayFromImage(mask_img) 
 
                 comb_mask = comb_mask | mask_arr 
                 
                 # Get the largest slice of the current mask 
-                slice_n = mask_arr[img_idx_subset['largest_slice_index'].iloc[idx+1]]
+                slice_n = img_idx_subset['largest_slice_index'].iloc[idx+1]
+                mask_slice_n = mask_arr[img_idx_subset['largest_slice_index'].iloc[idx+1]]
 
-                props_n = regionprops(slice_n)[0]
+                props_n = regionprops(mask_slice_n)[0]
                 diam_n = props_n.major_axis_length
 
                 # Compare previous largest slice to the current tumour 
@@ -234,17 +242,17 @@ def metrics_visuals_whole(index_df: pd.DataFrame,
                     largest_diam = diam_n                
 
     # Load in predicted mask 
-    pred_mask_path = Path("data/results") / disease_site / "/".join(str(img_path).split("/")[-1:]).replace("images", save_folder) / 'predicted_whole.nii.gz'
+    pred_mask_path = Path("data/results") / disease_site / "/".join(str(img_path).split("/")[:-1]).replace("images", save_folder) / 'predicted_whole.nii.gz'
     pred_mask_img = sitk.ReadImage(pred_mask_path)
     pred_mask = sitk.GetArrayFromImage(pred_mask_img) 
 
     # Load in image and get spacing
-    img = sitk.ReadImage(img_path) 
+    img = sitk.ReadImage(Path("data/procdata") / disease_site / img_path) 
     img_arr = sitk.GetArrayFromImage(img)
     img_spacing = img.GetSpacing()
 
     # Window image for visualization 
-    win_lvl, win_width = aaura_site_windowing(disease_site = disease_site)
+    win_lvl, win_width = aaura_site_windowing(disease_site = tumour_site)
     img_arr_win = apply_windowing(img_array = img_arr, 
                                   window_level = win_lvl, 
                                   window_width = win_width)
@@ -416,7 +424,8 @@ def iou_visual(image: np.ndarray,
     # Plot visualization
     fig, ax = plt.subplots(figsize = (8,8))
 
-    ax.imshow(image, cmap="gray") # Assumes image is already windowed to correct level and width for visualization
+    img_slice = image[largest_slice] # For whatever reason this is giving me an extra dimension? 
+    ax.imshow(img_slice, cmap="gray") # Assumes image is already windowed to correct level and width for visualization
     ax.add_patch(gt_patch) 
     ax.add_patch(pred_patch)
     ax.axis("off")
@@ -426,6 +435,8 @@ def iou_visual(image: np.ndarray,
 
     # Save visualization 
     fig.savefig(full_savepath, bbox_inches = 'tight')
+
+    plt.close('all')
 
 def indiv_metric_visuals(index_df: pd.DataFrame, 
                          img_path: Path, 
@@ -473,23 +484,25 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
         disease_site = tumour_site.capitalize()
 
     # Load in predicted segmentation 
-    pred_mask_path = Path("data/results") / disease_site / "/".join(str(img_path).split("/")[-1:]).replace("images", save_folder) / 'predicted_whole.nii.gz'
+    pred_mask_path = Path("data/results") / disease_site / "/".join(str(img_path).split("/")[:-1]).replace("images", save_folder) / 'predicted_whole.nii.gz'
     pred_mask_img = sitk.ReadImage(pred_mask_path)
     pred_mask = sitk.GetArrayFromImage(pred_mask_img) 
 
     # Load in image and get spacing
-    img = sitk.ReadImage(img_path) 
+    img = sitk.ReadImage(Path("data/procdata") / disease_site / img_path) 
     img_arr = sitk.GetArrayFromImage(img)
     img_spacing = img.GetSpacing()
 
     # Load in ground truth segmentations 
     gt_segs = dict()
-    for idx in len(img_idx_subset.shape[0]): 
+    for idx in range(img_idx_subset.shape[0]): 
         # Load in the current mask 
-        curr_mask_path = Path('data/procdata' / disease_site / img_idx_subset['mask_path'].iloc[idx])
+        curr_mask_path = Path('data/procdata') / disease_site / img_idx_subset['mask_path'].iloc[idx]
         curr_gt_mask = sitk.ReadImage(curr_mask_path)
         curr_gt_arr = sitk.GetArrayFromImage(curr_gt_mask) 
         gt_segs[curr_mask_path] = curr_gt_arr 
+
+    gt_segs_dupe = copy.deepcopy(gt_segs)
 
     # Separate the connected components from the predicted mask if it isn't empty, get matches into dictionary, and 
     # record false positives and negatives 
@@ -504,42 +517,50 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
                 continue # Ignore this component as it has less voxels than the threhsold for inclusion
 
             # Get current component as a binary array 
-            curr_comp_bin = curr_comp / comp_idx 
+            curr_comp_bin = np.clip(curr_comp, 0, 1)
+            curr_comp_bin = curr_comp_bin.astype(int)
             indiv_comps.append(curr_comp_bin)
 
             # Check if there are any overlaps with the individual ground truth segmentations 
             match_found = False
+            comp_counter = 0
             for key, val in gt_segs.items(): 
-                curr_intersect = np.bitwise_and(val, curr_comp_bin)
+                curr_intersect = val & curr_comp_bin
                 if np.count_nonzero(curr_intersect) > 0: 
                     # Indicates overlap between the two segmentations, so these have matched. Save as a pair for further analysis
-                    gt_pred_matches[str(comp_idx)]['gts_path'] = key
-                    gt_pred_matches[str(comp_idx)]['gts'] = val
-                    gt_pred_matches[str(comp_idx)]['pred'] = curr_comp_bin
+
+                    # Check if key for this component already exists, if it does, then add a unique identifier to the key name
+                    # This will happen if one predicted segmentation component overlaps one or more of the ground truth segmentations.
+                    comp_key = str(comp_idx) + "_" + str(comp_counter)
+                    if comp_key in gt_pred_matches.keys(): 
+                        comp_counter += 1 
+                        comp_key = str(comp_idx) + "_" + str(comp_counter) 
                     
-                    # Replace current ground truth segmentation in the gt_segs array with 'match_found' to keep 
+                    gt_pred_matches[comp_key] = dict()
+                    gt_pred_matches[comp_key]['gts_path'] = key
+                    gt_pred_matches[comp_key]['gts'] = val
+                    gt_pred_matches[comp_key]['pred'] = curr_comp_bin
+                    
+                    # Replace current ground truth segmentation in the gt_segs array with an empty array to keep 
                     # track of false negatives 
-                    gt_segs[key] = 'match_found'
+                    gt_segs_dupe[key] = np.empty_like(val)
                     match_found = True
             
-            # If no match was found, record it as a false positive
+            # If no match was found, record it as a false positive. Otherwise prep to return an empty dataframe for false positives
             if not match_found: 
-                false_pos = True
                 nonzero_slices = list_nonzero_seg_slices(curr_comp_bin)
                 voxels = np.count_nonzero(curr_comp_bin)
                 temp_info = [img_path, comp_idx, nonzero_slices, voxels]
-                temp_df = pd.DataFrame([temp_info], columns = ['image_path', 'conn_comp_idx', 'nonzero_slices', 'num_voxels'], index = 0)
+                temp_df = pd.DataFrame([temp_info], columns = ['image_path', 'conn_comp_idx', 'nonzero_slices', 'num_voxels'])
                 if 'false_positives' not in locals(): 
                     false_positives = temp_df
                 else: 
                     false_positives = pd.concat([false_positives, temp_df], ignore_index = True).reset_index(drop = True) 
-        
-        # If there are no false positives, prep to return empty dataframe 
-        if not false_pos: 
-            false_positives = pd.DataFrame()
+            else: 
+                false_positives = pd.DataFrame()
 
-        # If a ground truth segmentation did not have a successful match, record as false negative 
-        gt_no_match = [key for key, value in gt_segs.items() if value != 'match_found']
+        # If a ground truth segmentation did not have a successful match (aka did not get replaced with an empty array), record as false negative 
+        gt_no_match = [key for key, value in gt_segs_dupe.items() if np.count_nonzero(value) > 0]
         for no_match in gt_no_match:
             temp_df = img_idx_subset[img_idx_subset['mask_path'] == no_match]
             if 'false_negatives' not in locals(): 
@@ -560,7 +581,7 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
     # If there were any matches, record metrics and visualizations for each
     if gt_pred_matches: 
         # Window image for visualization 
-        win_lvl, win_width = aaura_site_windowing(disease_site = disease_site)
+        win_lvl, win_width = aaura_site_windowing(disease_site = tumour_site)
         img_arr_win = apply_windowing(img_array = img_arr, 
                                     window_level = win_lvl, 
                                     window_width = win_width)
@@ -570,20 +591,37 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
                                       gt_mask = value['gts'], 
                                       spacing = img_spacing, 
                                       filename = value['gts_path'])
+            
             # Get largest slice for the current ground truth segmentation 
-            curr_seg_row = img_idx_subset[img_idx_subset['mask_path'] == value['gts_path']].reset_index(drop = True)
-            curr_largest_slice = curr_seg_row['largest_slice_index']
+            # Get the original mask path without the added DMP path info 
+            gts_path_short = "/".join(str(value['gts_path']).split("/")[3:]) # Will remove the 'data/procdata/<disease_site>/' info  
+            curr_seg_row = img_idx_subset[img_idx_subset['mask_path'] == gts_path_short].reset_index(drop = True)
 
-            # Get bounding boxes for IoU calc
-            gt_bbox = bbox_from_seg(value['gts'][curr_largest_slice])
-            pred_bbox = bbox_from_seg(value['pred'][curr_largest_slice])
+            if curr_seg_row.empty:
+                raise ValueError(f"There are no mask paths that match the specified path {gts_path_short}")
+            
+            curr_largest_slice = curr_seg_row['largest_slice_index'].iloc[0]
 
-            # Calculate IoU 
-            curr_iou = calc_2d_IoU(bbox_gt = gt_bbox, 
-                                   bbox_pred = pred_bbox) 
-            results_df['2D_IoU'] = curr_iou
-            results_df['conn_comp'] = key # This is the connected component index from the matched predicted mask in case it needs reference later. Connected component calculations should be reproducable. 
-            results_df['prompt'] = prompt
+            # Check to make sure the size of each array is the same size 
+            if value['gts'].shape != value['pred'].shape: 
+                raise ValueError(f"The ground truth segmentation and prediction arrays are not of the same size for {gts_path_short}")
+            
+            # Check to see if the prediction has any pixels in the largest gts slice and if not, calculate the IoU as 0. 
+            if np.count_nonzero(value['pred'][curr_largest_slice]) == 0: 
+                curr_iou = 0
+
+            else: 
+                # Get bounding boxes for IoU calc
+                gt_bbox = bbox_from_seg(value['gts'][curr_largest_slice])
+                pred_bbox = bbox_from_seg(value['pred'][curr_largest_slice])
+
+                # Calculate IoU 
+                curr_iou = calc_2d_IoU(bbox_gt = gt_bbox, 
+                                    bbox_pred = pred_bbox) 
+            
+            curr_results_df['2D_IoU_LS'] = curr_iou
+            curr_results_df['conn_comp'] = key # This is the connected component index from the matched predicted mask in case it needs reference later. Connected component calculations should be reproducable. 
+            curr_results_df['prompt'] = prompt
 
             # Get visualizations
             visual_basepath = str(pred_mask_path).removesuffix('.nii.gz')
@@ -596,15 +634,16 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
                                 gt_masks = value['gts'], 
                                 full_savepath = pos_neg_savepath)
             
-            # IoU visualization
-            iou_savepath = Path(visual_basepath + "_iou_" + str(key) + ".png") 
+            # IoU visualization if there is any overlap 
+            if curr_iou > 0: 
+                iou_savepath = Path(visual_basepath + "_iou_" + str(key) + ".png") 
 
-            iou_visual(image = img_arr_win, 
-                       pred = value['pred'],
-                       gt = value['gts'], 
-                       iou = curr_iou, 
-                       largest_slice = curr_largest_slice, 
-                       full_savepath = iou_savepath)
+                iou_visual(image = img_arr_win, 
+                        pred = value['pred'],
+                        gt = value['gts'], 
+                        iou = curr_iou, 
+                        largest_slice = curr_largest_slice, 
+                        full_savepath = iou_savepath)
 
             # Save current results into results dataframe 
             if 'results_df' not in locals(): 
@@ -618,7 +657,13 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
         results_df = pd.DataFrame()
 
         return results_df, false_negatives, false_positives
-    
+
+@click.command() 
+@click.option('--aaura_idx') 
+@click.option('--checkpoint_path') 
+@click.option('--prompt_path')
+@click.option('--save_folder') 
+@click.option('--n_jobs') 
 def run_all_inference(aaura_idx: Path,
                       checkpoint_path: Path, 
                       prompt_path: Path,
@@ -648,8 +693,8 @@ def run_all_inference(aaura_idx: Path,
     # Load in index csv
     index_df = pd.read_csv(aaura_idx) 
 
-    # Initialize model and load prompt skeletons
-    model, device = initialize_model(ckpt_path = checkpoint_path)
+    # # Initialize model and load prompt skeletons
+    # model, device = initialize_model(ckpt_path = checkpoint_path)
     prompt_skels = load_prompt_skeletons(prompt_config_path = prompt_path) # NOTE: Current iteration of script assumes only one text prompt in config with a specific key
 
     # For the current prompt, predict segmentations 
@@ -657,15 +702,15 @@ def run_all_inference(aaura_idx: Path,
 
     # Run predictions in parallel 
     img_paths = index_df['image_path'].unique()
-    Parallel(n_jobs = n_jobs)(delayed(run_one_inference)(img_path = curr_path, 
-                                                         tumour_site = index_df[index_df['image_path'] == curr_path].reset_index(drop = True)['lesion_location'].iloc[0], 
-                                                         text_prompt = text_prompt, 
-                                                         model = model, 
-                                                         device = device, 
-                                                         save_folder = save_folder)
-                                                         for curr_path in (tqdm(img_paths, 
-                                                                           desc = "Running inference using BiomedParse", 
-                                                                           total = len(img_paths))))
+    # Parallel(n_jobs = n_jobs)(delayed(run_one_inference)(img_path = curr_path, 
+    #                                                      tumour_site = index_df[index_df['image_path'] == curr_path].reset_index(drop = True)['lesion_location'].iloc[0], 
+    #                                                      text_prompt = text_prompt, 
+    #                                                      model = model, 
+    #                                                      device = device, 
+    #                                                      save_folder = save_folder)
+    #                                                      for curr_path in (tqdm(img_paths, 
+    #                                                                        desc = "Running inference using BiomedParse", 
+    #                                                                        total = len(img_paths))))
     
     # Get results (both whole and individual) from the predictions 
     # Get savepath 
@@ -695,14 +740,14 @@ def run_all_inference(aaura_idx: Path,
                                                                                             total = len(img_paths))))
 
     for metric in whole_metrics: 
-        if not metric.empty(): 
+        if not metric.empty: 
             if 'all_whole_metrics' not in locals(): 
                 all_whole_metrics = metric 
             else: 
                 all_whole_metrics = pd.concat([all_whole_metrics, metric], ignore_index = True).reset_index(drop = True) 
     
-    all_whole_metrics.to_csv(Path(out_path / 'combined_mask_metric_eval.csv'), index = False)
-    del all_whole_metrics
+    all_whole_metrics.to_csv(out_path / Path('combined_mask_metric_eval.csv'), index = False)
+    # del all_whole_metrics
 
     indiv_metrics, false_negatives, false_positives = zip(*Parallel(n_jobs = n_jobs)(delayed(indiv_metric_visuals)(index_df = index_df, 
                                                                                                                     img_path = curr_path, 
@@ -713,31 +758,34 @@ def run_all_inference(aaura_idx: Path,
                                                                                                                                     total = len(img_paths)))))
 
     for metric in indiv_metrics: 
-        if not metric.empty(): 
+        if not metric.empty: 
             if 'all_indiv_metrics' not in locals(): 
                 all_indiv_metrics = metric 
             else: 
                 all_indiv_metrics = pd.concat([all_indiv_metrics, metric], ignore_index = True).reset_index(drop = True) 
     
-    all_indiv_metrics.to_csv(Path(out_path / 'indiv_mask_metric_eval.csv'), index = False)
+    all_indiv_metrics.to_csv(out_path / Path('indiv_mask_metric_eval.csv'), index = False)
     del all_indiv_metrics 
 
     for false_neg in false_negatives: 
-        if not false_neg.empty(): 
+        if not false_neg.empty: 
             if 'all_false_neg' not in locals(): 
                 all_false_neg = false_neg 
             else: 
                 all_false_neg = pd.concat([all_false_neg, false_neg], ignore_index = True).reset_index(drop = True)
     
-    all_false_neg.to_csv(Path(out_path / 'indiv_false_negatives.csv'), index = False)
+    all_false_neg.to_csv(out_path / Path('indiv_false_negatives.csv'), index = False)
     del all_false_neg
 
     for false_pos in false_positives: 
-        if not false_pos.empty(): 
+        if not false_pos.empty: 
             if 'all_false_pos' not in locals(): 
                 all_false_pos = false_pos
             else: 
                 all_false_pos = pd.concat([all_false_pos, false_pos], ignore_index = True).reset_index(drop = True) 
 
-    all_false_pos.to_csv(Path(out_path / 'indiv_false_positives.csv'), index = False) 
+    all_false_pos.to_csv(out_path / Path('indiv_false_positives.csv'), index = False) 
     del all_false_pos 
+
+if __name__ == "__main__": 
+    run_all_inference()
