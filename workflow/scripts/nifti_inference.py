@@ -411,12 +411,12 @@ def iou_visual(image: np.ndarray,
 
     # Prep plot patches for bounding boxes
     gt_patch = mpatches.Rectangle((gt_bbox[0], gt_bbox[1]), gt_width, gt_height, 
-                                  linewidth=1, 
+                                  linewidth=3, 
                                   edgecolor='c', 
                                   facecolor='none', 
                                   label='Ground Truth') 
     pred_patch = mpatches.Rectangle((pred_bbox[0], pred_bbox[1]), pred_width, pred_height, 
-                                    linewidth=1, 
+                                    linewidth=3, 
                                     edgecolor='m', 
                                     facecolor='none', 
                                     label='Prediction') 
@@ -522,8 +522,8 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
             indiv_comps.append(curr_comp_bin)
 
             # Check if there are any overlaps with the individual ground truth segmentations 
-            match_found = False
             comp_counter = 0
+            match_found = False
             for key, val in gt_segs.items(): 
                 curr_intersect = val & curr_comp_bin
                 if np.count_nonzero(curr_intersect) > 0: 
@@ -541,9 +541,9 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
                     gt_pred_matches[comp_key]['gts'] = val
                     gt_pred_matches[comp_key]['pred'] = curr_comp_bin
                     
-                    # Replace current ground truth segmentation in the gt_segs array with an empty array to keep 
+                    # Remove the ground truth segmentation in the gt_segs_dupe array to keep 
                     # track of false negatives 
-                    gt_segs_dupe[key] = np.empty_like(val)
+                    gt_segs_dupe.pop(key, None)
                     match_found = True
             
             # If no match was found, record it as a false positive. Otherwise prep to return an empty dataframe for false positives
@@ -556,23 +556,29 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
                     false_positives = temp_df
                 else: 
                     false_positives = pd.concat([false_positives, temp_df], ignore_index = True).reset_index(drop = True) 
-            else: 
-                false_positives = pd.DataFrame()
 
         # If a ground truth segmentation did not have a successful match (aka did not get replaced with an empty array), record as false negative 
-        gt_no_match = [key for key, value in gt_segs_dupe.items() if np.count_nonzero(value) > 0]
-        for no_match in gt_no_match:
-            temp_df = img_idx_subset[img_idx_subset['mask_path'] == no_match]
-            if 'false_negatives' not in locals(): 
-                false_negatives = temp_df
-            else: 
-                false_negatives = pd.concat([false_negatives, temp_df], ignore_index = True).reset_index(drop = True) 
-        else: 
-            false_negatives = pd.DataFrame() # No false negatives, so prep to return empty dataframe 
-        
+        if not gt_segs_dupe: 
+            # If all entries are now gone from the gt_segs_dupe dictionary, all segmentations have an appropriate match. 
+            # Return empty false negative dataframe 
+            false_negatives = pd.DataFrame()
+        else:
+            for key, _ in gt_segs_dupe.items():
+                # Get the correct mask path to match 
+                mask_short_path = "/".join(str(key).split("/")[3:])
+                print(f'False negative found for: {mask_short_path}')
+                temp_df = img_idx_subset[img_idx_subset['mask_path'] == mask_short_path]
+                if 'false_negatives' not in locals(): 
+                    false_negatives = temp_df
+                else: 
+                    false_negatives = pd.concat([false_negatives, temp_df], ignore_index = True).reset_index(drop = True) 
+            print(f'Current false negatives: {false_negatives}')
+
     else: 
         # If the prediction is empty, then consider all individual tumours as false negatives.
+        print(f'Empty segmentation prediction')
         false_negatives = img_idx_subset
+        print(f'False negatives: {false_negatives}')
         false_positives = pd.DataFrame() 
         results_df = pd.DataFrame()
 
@@ -651,11 +657,14 @@ def indiv_metric_visuals(index_df: pd.DataFrame,
             else: 
                 results_df = pd.concat([results_df, curr_results_df], ignore_index = True).reset_index(drop = True) 
         
+        if 'false_positives' not in locals(): 
+            false_positives = pd.DataFrame()
+
         return results_df, false_negatives, false_positives
             
     else: 
         results_df = pd.DataFrame()
-
+        false_positives = pd.DataFrame() # Need to define this here in case the segmentation was less than threshold pixels
         return results_df, false_negatives, false_positives
 
 @click.command() 
@@ -731,22 +740,22 @@ def run_all_inference(aaura_idx: Path,
     if not out_path.exists(): 
         raise FileNotFoundError(f"The specified save path does not exist yet. Please run inference first or check the inputted path: {out_path}")
 
-    whole_metrics = Parallel(n_jobs = n_jobs)(delayed(metrics_visuals_whole)(index_df = index_df, 
-                                                                            img_path = curr_path, 
-                                                                            save_folder = save_folder, 
-                                                                            prompt = text_prompt["1"])
-                                                                            for curr_path in (tqdm(img_paths, 
-                                                                                            desc = "Running metrics on combined masks", 
-                                                                                            total = len(img_paths))))
+    # whole_metrics = Parallel(n_jobs = n_jobs)(delayed(metrics_visuals_whole)(index_df = index_df, 
+    #                                                                         img_path = curr_path, 
+    #                                                                         save_folder = save_folder, 
+    #                                                                         prompt = text_prompt["1"])
+    #                                                                         for curr_path in (tqdm(img_paths, 
+    #                                                                                         desc = "Running metrics on combined masks", 
+    #                                                                                         total = len(img_paths))))
 
-    for metric in whole_metrics: 
-        if not metric.empty: 
-            if 'all_whole_metrics' not in locals(): 
-                all_whole_metrics = metric 
-            else: 
-                all_whole_metrics = pd.concat([all_whole_metrics, metric], ignore_index = True).reset_index(drop = True) 
+    # for metric in whole_metrics: 
+    #     if not metric.empty: 
+    #         if 'all_whole_metrics' not in locals(): 
+    #             all_whole_metrics = metric 
+    #         else: 
+    #             all_whole_metrics = pd.concat([all_whole_metrics, metric], ignore_index = True).reset_index(drop = True) 
     
-    all_whole_metrics.to_csv(out_path / Path('combined_mask_metric_eval.csv'), index = False)
+    # all_whole_metrics.to_csv(out_path / Path('combined_mask_metric_eval.csv'), index = False)
     # del all_whole_metrics
 
     indiv_metrics, false_negatives, false_positives = zip(*Parallel(n_jobs = n_jobs)(delayed(indiv_metric_visuals)(index_df = index_df, 
@@ -773,9 +782,10 @@ def run_all_inference(aaura_idx: Path,
                 all_false_neg = false_neg 
             else: 
                 all_false_neg = pd.concat([all_false_neg, false_neg], ignore_index = True).reset_index(drop = True)
-    
-    all_false_neg.to_csv(out_path / Path('indiv_false_negatives.csv'), index = False)
-    del all_false_neg
+    # Cover the case where there are no false negatives 
+    if 'all_false_neg' in locals():
+        all_false_neg.to_csv(out_path / Path('indiv_false_negatives.csv'), index = False)
+        del all_false_neg
 
     for false_pos in false_positives: 
         if not false_pos.empty: 
@@ -784,8 +794,10 @@ def run_all_inference(aaura_idx: Path,
             else: 
                 all_false_pos = pd.concat([all_false_pos, false_pos], ignore_index = True).reset_index(drop = True) 
 
-    all_false_pos.to_csv(out_path / Path('indiv_false_positives.csv'), index = False) 
-    del all_false_pos 
+    # Cover the case where there are not false positives 
+    if 'all_false_pos' in locals():
+        all_false_pos.to_csv(out_path / Path('indiv_false_positives.csv'), index = False) 
+        del all_false_pos 
 
 if __name__ == "__main__": 
     run_all_inference()
